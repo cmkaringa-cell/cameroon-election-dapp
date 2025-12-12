@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cameroon Presidential Election DApp</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h2 { margin-top: 30px; }
+    .section { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
+    label { display: block; margin-top: 8px; }
+    input, button { margin-top: 5px; padding: 5px; }
+    button { cursor: pointer; }
+    #status { margin-bottom: 20px; font-weight: bold; }
+    .small { font-size: 0.9em; color: #555; }
+    pre { background: #f4f4f4; padding: 10px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Cameroon Presidential Election DApp</h1>
+
+  <div id="status">Not connected</div>
+  <button id="connectButton">Connect MetaMask</button>
+
+  <div class="section">
+    <h2>Contract info</h2>
+    <div><b>Connected account:</b> <span id="account"></span></div>
+    <div><b>Admin address:</b> <span id="admin"></span></div>
+    <div><b>Election state (0=NotStarted,1=Registration,2=Voting,3=Ended):</b> <span id="state"></span></div>
+    <div><b>Candidates count:</b> <span id="candidatesCount"></span></div>
+  </div>
+
+  <div class="section">
+    <h2>Admin actions</h2>
+    <button id="startRegistration">Start Registration</button>
+    <button id="startVoting">Start Voting</button>
+    <button id="endElection">End Election</button>
+
+    <h3>Register candidate</h3>
+    <label>Candidate name: <input type="text" id="candidateName"></label>
+    <label>Party: <input type="text" id="candidateParty"></label>
+    <button id="registerCandidate">Register Candidate</button>
+
+    <h3>Register voter</h3>
+    <label>Voter address: <input type="text" id="voterAddress"></label>
+    <button id="registerVoter">Register Voter</button>
+
+    <p class="small">These actions must be done from the admin account (the one that deployed the contract).</p>
+  </div>
+
+  <div class="section">
+    <h2>Voter actions</h2>
+    <h3>Vote</h3>
+    <label>Candidate ID: <input type="number" id="voteCandidateId" min="1"></label>
+    <button id="voteButton">Vote</button>
+    <p class="small">The connected MetaMask account must be a registered voter.</p>
+  </div>
+
+  <div class="section">
+    <h2>View candidates</h2>
+    <label>Candidate ID: <input type="number" id="viewCandidateId" min="1"></label>
+    <button id="viewCandidateButton">Get Candidate</button>
+    <pre id="candidateDetails"></pre>
+  </div>
+
+  <div class="section">
+    <h2>View winner</h2>
+    <button id="viewWinnerButton">Get Winner ID</button>
+    <div id="winnerResult"></div>
+  </div>
+
+  <script>
+    // ======= CONFIGURE THIS FOR YOUR DEPLOYED CONTRACT =======
+    const CONTRACT_ADDRESS = "PASTE_YOUR_CONTRACT_ADDRESS_HERE";
+
+    const CONTRACT_ABI = [
+      // Read functions
+      "function admin() view returns (address)",
+      "function state() view returns (uint8)",
+      "function candidatesCount() view returns (uint256)",
+      "function getCandidate(uint256 _candidateId) view returns (uint256 id, string memory name, string memory party, uint256 voteCount)",
+      "function getWinner() view returns (uint256 winnerId)",
+      "function voters(address) view returns (bool isRegistered, bool hasVoted, uint256 votedCandidateId)",
+
+      // State-changing functions
+      "function startRegistration()",
+      "function startVoting()",
+      "function endElection()",
+      "function registerCandidate(string calldata _name, string calldata _party)",
+      "function registerVoter(address _voter)",
+      "function vote(uint256 _candidateId)",
+
+      // Events (not strictly needed for basic demo)
+      "event ElectionStateChanged(uint8 newState)",
+      "event CandidateRegistered(uint256 id, string name, string party)",
+      "event VoterRegistered(address voter)",
+      "event VoteCast(address voter, uint256 candidateId)"
+    ];
+    // =========================================================
+
+    let provider;
+    let signer;
+    let contract;
+    let currentAccount;
+
+    const statusEl = document.getElementById("status");
+    const accountEl = document.getElementById("account");
+    const adminEl = document.getElementById("admin");
+    const stateEl = document.getElementById("state");
+    const candidatesCountEl = document.getElementById("candidatesCount");
+    const candidateDetailsEl = document.getElementById("candidateDetails");
+    const winnerResultEl = document.getElementById("winnerResult");
+
+    async function connectWallet() {
+      if (!window.ethereum) {
+        statusEl.textContent = "MetaMask not found. Please install it.";
+        return;
+      }
+
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        currentAccount = accounts[0];
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        signer = provider.getSigner();
+        contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+        statusEl.textContent = "Connected";
+        accountEl.textContent = currentAccount;
+
+        await refreshContractInfo();
+
+        // Listen for account changes
+        window.ethereum.on('accountsChanged', async (accounts) => {
+          currentAccount = accounts[0];
+          accountEl.textContent = currentAccount;
+          signer = provider.getSigner();
+          contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+          await refreshContractInfo();
+        });
+
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Connection failed: " + (err.message || err);
+      }
+    }
+
+    async function refreshContractInfo() {
+      if (!contract) return;
+      try {
+        const admin = await contract.admin();
+        const state = await contract.state();
+        const candidatesCount = await contract.candidatesCount();
+
+        adminEl.textContent = admin;
+        stateEl.textContent = state.toString();
+        candidatesCountEl.textContent = candidatesCount.toString();
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error reading contract: " + (err.message || err);
+      }
+    }
+
+    // Admin actions
+    async function callStartRegistration() {
+      try {
+        const tx = await contract.startRegistration();
+        statusEl.textContent = "Starting registration... waiting for confirmation";
+        await tx.wait();
+        statusEl.textContent = "Registration started";
+        await refreshContractInfo();
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    async function callStartVoting() {
+      try {
+        const tx = await contract.startVoting();
+        statusEl.textContent = "Starting voting... waiting for confirmation";
+        await tx.wait();
+        statusEl.textContent = "Voting started";
+        await refreshContractInfo();
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    async function callEndElection() {
+      try {
+        const tx = await contract.endElection();
+        statusEl.textContent = "Ending election... waiting for confirmation";
+        await tx.wait();
+        statusEl.textContent = "Election ended";
+        await refreshContractInfo();
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    async function callRegisterCandidate() {
+      const name = document.getElementById("candidateName").value.trim();
+      const party = document.getElementById("candidateParty").value.trim();
+      if (!name) {
+        alert("Candidate name required");
+        return;
+      }
+
+      try {
+        const tx = await contract.registerCandidate(name, party);
+        statusEl.textContent = "Registering candidate... waiting for confirmation";
+        await tx.wait();
+        statusEl.textContent = "Candidate registered";
+        document.getElementById("candidateName").value = "";
+        document.getElementById("candidateParty").value = "";
+        await refreshContractInfo();
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    async function callRegisterVoter() {
+      const voterAddr = document.getElementById("voterAddress").value.trim();
+      if (!voterAddr) {
+        alert("Voter address required");
+        return;
+      }
+
+      try {
+        const tx = await contract.registerVoter(voterAddr);
+        statusEl.textContent = "Registering voter... waiting for confirmation";
+        await tx.wait();
+        statusEl.textContent = "Voter registered";
+        document.getElementById("voterAddress").value = "";
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    // Voter actions
+    async function callVote() {
+      const candidateId = document.getElementById("voteCandidateId").value;
+      if (!candidateId) {
+        alert("Candidate ID required");
+        return;
+      }
+
+      try {
+        const tx = await contract.vote(candidateId);
+        statusEl.textContent = "Casting vote... waiting for confirmation";
+        await tx.wait();
+        statusEl.textContent = "Vote cast successfully";
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    // View functions
+    async function callGetCandidate() {
+      const id = document.getElementById("viewCandidateId").value;
+      if (!id) {
+        alert("Candidate ID required");
+        return;
+      }
+
+      try {
+        const result = await contract.getCandidate(id);
+        const [cid, name, party, voteCount] = result;
+        candidateDetailsEl.textContent =
+          "ID: " + cid.toString() + "\n" +
+          "Name: " + name + "\n" +
+          "Party: " + party + "\n" +
+          "Vote count: " + voteCount.toString();
+      } catch (err) {
+        console.error(err);
+        candidateDetailsEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    async function callGetWinner() {
+      try {
+        const winnerId = await contract.getWinner();
+        winnerResultEl.textContent = "Winning candidate ID: " + winnerId.toString();
+      } catch (err) {
+        console.error(err);
+        winnerResultEl.textContent = "Error: " + (err.data?.message || err.message || err);
+      }
+    }
+
+    // Attach event handlers
+    document.getElementById("connectButton").onclick = connectWallet;
+    document.getElementById("startRegistration").onclick = callStartRegistration;
+    document.getElementById("startVoting").onclick = callStartVoting;
+    document.getElementById("endElection").onclick = callEndElection;
+    document.getElementById("registerCandidate").onclick = callRegisterCandidate;
+    document.getElementById("registerVoter").onclick = callRegisterVoter;
+    document.getElementById("voteButton").onclick = callVote;
+    document.getElementById("viewCandidateButton").onclick = callGetCandidate;
+    document.getElementById("viewWinnerButton").onclick = callGetWinner;
+  </script>
+</body>
+</html>
